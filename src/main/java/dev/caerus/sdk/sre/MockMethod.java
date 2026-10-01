@@ -1,0 +1,17 @@
+package dev.caerus.sdk.sre;
+
+public enum MockMethod {
+    CREATE_UNITARY,
+    CREATE_MULTIPLE,
+    UPDATE_RESOURCE,
+    DELETE_RESOURCE,
+    TAKE,
+    TAKE_MANY,
+    CONFIRM,
+    RELEASE,
+    EXTEND,
+    GET_RESOURCE,
+    GET_RESOURCES_BY_GROUP,
+    GET_RESOURCE_HOLDER,
+    LIST_RESOURCE_HOLDERS
+}

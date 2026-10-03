@@ -331,6 +331,25 @@ class LiveDlsTest {
     }
 
     @Test
+    void anIdempotencyKeyReplaysTheLockAndAnotherKeyIsAlreadyHeld() {
+        String key = Live.key("idem");
+
+        dls.withTransaction(tx -> {
+            AcquireLockOptions same = idem().build();
+            LockHolder first = tx.acquireLock(NS_QUEUE, key, LockMode.EXCLUSIVE, same);
+            LockHolder again = tx.acquireLock(NS_QUEUE, key, LockMode.EXCLUSIVE, same);
+            Throwable other = catchThrowable(() -> tx.acquireLock(NS_QUEUE, key, LockMode.EXCLUSIVE, idem().build()));
+
+            Live.log("la misma clave devuelve el mismo lock y otra clave da LOCK_ALREADY_HELD_EXCLUSIVELY",
+                    first.equals(again) + " / " + other);
+            assertThat(again).isEqualTo(first);
+            assertThat(other).isInstanceOf(dev.caerus.sdk.dls.LockAlreadyHeldError.class);
+            assertThat(((CaerusError) other).reason()).contains("LOCK_ALREADY_HELD_EXCLUSIVELY");
+            return null;
+        }, TransactionOptions.builder().timeoutMs(15_000L).build());
+    }
+
+    @Test
     void fencingTokensGrowAcrossHandoffs() {
         String key = Live.key("fencing");
         List<Long> tokens = new CopyOnWriteArrayList<>();

@@ -90,8 +90,14 @@ compartir claves ni datos. `docUrl()` apunta a este documento.
 ## `TimeoutError` no significa que no pasó nada
 
 Significa que la llamada pasó su deadline. Si el servidor llegó a hacer el trabajo, no se
-sabe. Reintentar con la misma clave de idempotencia devuelve el holder que ya existía; mirá
-su `status()`, porque puede volver terminado.
+sabe. Reintentar con la misma clave de idempotencia devuelve el holder que ya existía si
+sigue `PENDING` o `QUEUED`. Si ya terminó (`CONFIRMED`, `RELEASED` o `EXPIRED`), el motor
+lo devuelve igual pero el SDK lanza `ConflictError`: nunca te entrega un holder que no
+podés usar. Para ver en qué quedó, usá `getResourceHolder`.
+
+En el DLS pasa lo mismo con `acquireLock`: repetir la misma clave de idempotencia en la
+misma transacción devuelve el mismo lock (mismo `lockId` y fencing token); pedir el mismo
+lock con otra clave da `LockAlreadyHeldError`.
 
 ## El SDK no reintenta
 

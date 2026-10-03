@@ -7,6 +7,9 @@ import dev.caerus.sdk.internal.Json;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
@@ -37,12 +40,12 @@ public final class Webhooks {
         return constructEvent(payload, signatureHeader, secret, DEFAULT_TOLERANCE_SECONDS);
     }
 
-    public CaerusEvent constructEvent(byte[] payload, String signatureHeader, String secret, long toleranceSeconds) {
-        String raw = payload == null ? "" : new String(payload, StandardCharsets.UTF_8);
-        return constructEvent(raw, signatureHeader, secret, toleranceSeconds);
+    public CaerusEvent constructEvent(String payload, String signatureHeader, String secret, long toleranceSeconds) {
+        byte[] body = payload == null ? new byte[0] : payload.getBytes(StandardCharsets.UTF_8);
+        return constructEvent(body, signatureHeader, secret, toleranceSeconds);
     }
 
-    public CaerusEvent constructEvent(String payload, String signatureHeader, String secret, long toleranceSeconds) {
+    public CaerusEvent constructEvent(byte[] payload, String signatureHeader, String secret, long toleranceSeconds) {
         if (signatureHeader == null || signatureHeader.isEmpty()) {
             throw new CaerusSignatureError("No signature header provided.");
         }
@@ -78,8 +81,9 @@ public final class Webhooks {
             throw new CaerusWebhookExpiredError("Webhook timestamp is outside of the tolerance zone.");
         }
 
-        String rawPayload = payload == null ? "" : payload;
-        byte[] expected = sign(secret, timestampText + "." + rawPayload).getBytes(StandardCharsets.US_ASCII);
+        byte[] body = payload == null ? new byte[0] : payload;
+        byte[] expected = sign(secret, (timestampText + ".").getBytes(StandardCharsets.UTF_8), body)
+                .getBytes(StandardCharsets.US_ASCII);
 
         boolean valid = false;
         for (String signature : signatures) {
@@ -91,6 +95,19 @@ public final class Webhooks {
 
         if (!valid) {
             throw new CaerusSignatureError("No matching signature found.");
+        }
+
+        String rawPayload;
+        try {
+            rawPayload = StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(body))
+                    .toString();
+        } catch (CharacterCodingException e) {
+            throw new CaerusWebhookPayloadError(
+                    "The webhook signature is valid but the body is not valid UTF-8.",
+                    CaerusErrorOptions.builder().cause(e).build());
         }
 
         JsonElement parsed;
@@ -110,10 +127,15 @@ public final class Webhooks {
     }
 
     static String sign(String secret, String content) {
+        return sign(secret, content.getBytes(StandardCharsets.UTF_8), new byte[0]);
+    }
+
+    static String sign(String secret, byte[] prefix, byte[] body) {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
-            return HexFormat.of().formatHex(mac.doFinal(content.getBytes(StandardCharsets.UTF_8)));
+            mac.update(prefix);
+            return HexFormat.of().formatHex(mac.doFinal(body));
         } catch (GeneralSecurityException e) {
             throw new IllegalStateException("HmacSHA256 is not available in this JVM", e);
         }

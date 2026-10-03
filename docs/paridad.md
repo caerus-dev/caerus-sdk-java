@@ -37,8 +37,27 @@ sigue es lo que cambia, y por qué.
 | 7 | `renewTransaction` devuelve solo el `transactionId` | Igual |
 | 8 | `webhooks` solo en `CaerusClient` (y el mock del SRE) | Igual |
 
-## Otras diferencias chicas, a favor de parecerse al motor
+## Otras diferencias, a favor de parecerse al motor
 
+Salieron de la revisión del PR #1. Las tres primeras también pasan en TypeScript; vale la
+pena proponer el mismo cambio allá.
+
+- **La pérdida de la transacción corta también una espera con señal propia.** En TS, si un
+  `acquireLock` dentro de `withTransaction` trae su propio `signal`, ese reemplaza al de la
+  transacción y una transacción perdida no corta la espera: queda colgada hasta el deadline.
+  En Java la espera escucha las dos señales.
+- **Las renovaciones no se superponen.** Si una renovación tarda más que el intervalo, el
+  siguiente latido se saltea en vez de mandar otra en paralelo.
+- **La firma de un webhook se calcula sobre los bytes crudos.** TS decodifica el `Buffer`
+  como UTF-8 antes de firmar, así que un cuerpo con UTF-8 inválido falla como firma
+  incorrecta. En Java la firma se verifica primero y un UTF-8 inválido da
+  `CaerusWebhookPayloadError`.
+- **`InMemoryDlsClient` respeta la clave de idempotencia de `acquireLock`**: la misma clave en
+  la misma transacción devuelve el mismo lock, y otra clave da `LockAlreadyHeldError`
+  (`LOCK_ALREADY_HELD_EXCLUSIVELY`), como `ZooKeeperDistributedLockAdapter` (verificado
+  contra el motor el 03/10). El de TS lanza `LockDeniedError` en los dos casos.
+- `getTransactionStatus` informa `EXCLUSIVE` cuando el modo pedido llega sin especificar,
+  igual que TS. No es inventar: el motor trata un modo sin especificar como `EXCLUSIVE`.
 - `InMemoryDlsClient.getLockStatus` devuelve el fencing token real de cada holder; el de TS
   devuelve `0`, que el cliente real nunca devolvería.
 - `InMemoryDlsClient.acquireLock` con una señal ya cancelada lanza `DlsError` ("AcquireLock

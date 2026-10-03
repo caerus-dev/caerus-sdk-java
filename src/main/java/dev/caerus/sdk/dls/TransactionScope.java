@@ -4,9 +4,12 @@ import dev.caerus.sdk.AbortController;
 import dev.caerus.sdk.AbortSignal;
 import dev.caerus.sdk.internal.Futures;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
@@ -20,6 +23,7 @@ final class TransactionScope implements TransactionContext {
     private final TransactionOptions options;
     private final AbortController lostController = new AbortController();
     private final AtomicInteger consecutiveFailures = new AtomicInteger();
+    private final AtomicBoolean renewing = new AtomicBoolean();
     private final Object heartbeatLock = new Object();
 
     private volatile boolean closed;
@@ -90,16 +94,23 @@ final class TransactionScope implements TransactionContext {
             throw lostError;
         }
         AcquireLockOptions given = acquireOptions == null ? AcquireLockOptions.none() : acquireOptions;
-        AbortSignal signal = given.signal()
-                .or(options::signal)
-                .orElse(lostController.signal());
+        AbortController combined = new AbortController();
+        List<Runnable> stopListening = new ArrayList<>();
+        given.signal().or(options::signal).ifPresent(own ->
+                stopListening.add(own.onAbort(() -> combined.abort(own.reason().orElse(null)))));
+        AbortSignal lostSignal = lostController.signal();
+        stopListening.add(lostSignal.onAbort(() -> combined.abort(lostSignal.reason().orElse(null))));
 
-        AcquireLockOptions.Builder merged = AcquireLockOptions.builder().signal(signal);
+        AcquireLockOptions.Builder merged = AcquireLockOptions.builder().signal(combined.signal());
         given.idempotencyKey().ifPresent(merged::idempotencyKey);
         given.timeoutMs().ifPresent(merged::timeoutMs);
         given.onQueued().ifPresent(merged::onQueued);
 
-        return await(operations.acquireLockAsync(namespace, lockKey, transactionId, mode, merged.build()));
+        try {
+            return await(operations.acquireLockAsync(namespace, lockKey, transactionId, mode, merged.build()));
+        } finally {
+            stopListening.forEach(Runnable::run);
+        }
     }
 
     @Override
@@ -125,7 +136,7 @@ final class TransactionScope implements TransactionContext {
     }
 
     private void renew(long lifetime) {
-        if (closed || lost != null) {
+        if (closed || lost != null || !renewing.compareAndSet(false, true)) {
             return;
         }
         CompletableFuture<Transaction> renewal;
@@ -135,6 +146,7 @@ final class TransactionScope implements TransactionContext {
             renewal = CompletableFuture.failedFuture(e);
         }
         renewal.whenComplete((ignored, error) -> {
+            renewing.set(false);
             if (error == null) {
                 consecutiveFailures.set(0);
                 return;

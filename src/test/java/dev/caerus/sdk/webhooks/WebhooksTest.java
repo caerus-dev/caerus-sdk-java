@@ -91,6 +91,23 @@ class WebhooksTest {
     }
 
     @Test
+    void verifiesTheSignatureOverTheRawBytesEvenWhenTheyAreNotValidUtf8() throws Exception {
+        java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
+        body.write("{\"eventType\":\"x\",\"b\":\"".getBytes(StandardCharsets.UTF_8));
+        body.write(0xff);
+        body.write("\"}".getBytes(StandardCharsets.UTF_8));
+        byte[] raw = body.toByteArray();
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec(SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+        mac.update((NOW + ".").getBytes(StandardCharsets.UTF_8));
+        String signed = "t=" + NOW + ",v1=" + HexFormat.of().formatHex(mac.doFinal(raw));
+
+        assertThatThrownBy(() -> webhooks.constructEvent(raw, signed, SECRET))
+                .isInstanceOf(CaerusWebhookPayloadError.class)
+                .hasMessageContaining("UTF-8");
+    }
+
+    @Test
     void throwsASignatureErrorIfTheHeaderIsMissing() {
         assertThatThrownBy(() -> webhooks.constructEvent("{}", "", SECRET)).isInstanceOf(CaerusSignatureError.class);
         assertThatThrownBy(() -> webhooks.constructEvent("{}", (String) null, SECRET)).isInstanceOf(CaerusSignatureError.class);

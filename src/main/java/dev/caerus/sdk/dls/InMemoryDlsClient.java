@@ -88,6 +88,19 @@ public final class InMemoryDlsClient implements DlsApi {
                     .filter(held -> held.expiresAt > now)
                     .collect(Collectors.toCollection(ArrayList::new));
 
+            String idempotencyKey = resolved.idempotencyKey().orElse(null);
+            for (MockLock held : active) {
+                if (!held.transactionId.equals(transactionId)) {
+                    continue;
+                }
+                if (idempotencyKey != null && idempotencyKey.equals(held.idempotencyKey)) {
+                    return new LockHolder(held.lockId, OptionalLong.of(held.fencingToken), LockStatus.ACQUIRED);
+                }
+                throw new LockAlreadyHeldError(
+                        "Transaction " + transactionId + " already holds or requested lock on " + lockKey,
+                        CaerusErrorOptions.builder().reason(ErrorReason.LOCK_ALREADY_HELD_EXCLUSIVELY).build());
+            }
+
             if (!active.isEmpty()
                     && (mode == LockMode.EXCLUSIVE || active.stream().anyMatch(held -> held.mode == LockMode.EXCLUSIVE))) {
                 throw new LockDeniedError(
@@ -101,7 +114,8 @@ public final class InMemoryDlsClient implements DlsApi {
             created.transactionId = transactionId;
             created.namespace = namespace;
             created.lockKey = lockKey;
-            created.mode = mode;
+            created.mode = mode == null ? LockMode.EXCLUSIVE : mode;
+            created.idempotencyKey = idempotencyKey;
             created.fencingToken = nextFencingToken++;
             created.expiresAt = txExpiration.getOrDefault(transactionId, now + DEFAULT_TTL_MS);
 
@@ -280,5 +294,6 @@ public final class InMemoryDlsClient implements DlsApi {
         private LockMode mode;
         private long fencingToken;
         private long expiresAt;
+        private String idempotencyKey;
     }
 }

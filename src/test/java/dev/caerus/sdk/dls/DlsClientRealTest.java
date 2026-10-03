@@ -26,6 +26,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static dev.caerus.sdk.support.FakeDlsEngine.acquired;
@@ -287,6 +288,64 @@ class DlsClientRealTest {
 
         assertThat(error).isInstanceOf(DlsError.class);
         assertThat(elapsedMs).isLessThan(4000);
+    }
+
+    @Test
+    void losingTheTransactionAlsoCutsAWaitThatBringsItsOwnSignal() {
+        engine.on("renewTransaction", (request, observer) ->
+                observer.onError(GrpcErrors.withReason(Status.Code.FAILED_PRECONDITION, "cerrada", "TRANSACTION_NOT_ACTIVE")));
+        engine.<AcquireLockRequest, AcquireLockResponse>on("acquireLock", (request, observer) ->
+                observer.onNext(withStatus(LockStatus.QUEUED)));
+        AbortController own = new AbortController();
+
+        long started = System.nanoTime();
+        Throwable error = catchThrowable(() -> client.withTransaction(
+                tx -> tx.acquireLock("ns", "k", LockMode.EXCLUSIVE,
+                        AcquireLockOptions.builder().signal(own.signal()).timeoutMs(8000L).build()),
+                TransactionOptions.builder().timeoutMs(2000L).build()));
+        long elapsedMs = (System.nanoTime() - started) / 1_000_000;
+
+        assertThat(error).isInstanceOf(DlsError.class);
+        assertThat(elapsedMs).isLessThan(4000);
+        assertThat(own.signal().aborted()).isFalse();
+    }
+
+    @Test
+    void itsOwnSignalStillCutsTheWaitInsideATransaction() {
+        engine.<AcquireLockRequest, AcquireLockResponse>on("acquireLock", (request, observer) ->
+                observer.onNext(withStatus(LockStatus.QUEUED)));
+        AbortController own = new AbortController();
+        later.schedule(() -> own.abort(), 100, TimeUnit.MILLISECONDS);
+
+        Throwable error = catchThrowable(() -> client.withTransaction(
+                tx -> tx.acquireLock("ns", "k", LockMode.EXCLUSIVE,
+                        AcquireLockOptions.builder().signal(own.signal()).timeoutMs(8000L).build()),
+                noRenew()));
+
+        assertThat(error).isInstanceOf(DlsError.class).hasMessageContaining("AcquireLock aborted by user");
+    }
+
+    @Test
+    void aSlowRenewalIsNeverOverlappedByTheNextOne() {
+        AtomicInteger inFlight = new AtomicInteger();
+        AtomicInteger maxInFlight = new AtomicInteger();
+        AtomicInteger started = new AtomicInteger();
+        engine.<RenewTransactionRequest, RenewTransactionResponse>on("renewTransaction", (request, observer) -> {
+            started.incrementAndGet();
+            maxInFlight.accumulateAndGet(inFlight.incrementAndGet(), Math::max);
+            later.schedule(() -> {
+                inFlight.decrementAndGet();
+                reply(observer, RenewTransactionResponse.newBuilder().setTransactionId("tx-1").build());
+            }, 2500, TimeUnit.MILLISECONDS);
+        });
+
+        client.withTransaction(tx -> {
+            sleep(3800);
+            return null;
+        }, TransactionOptions.builder().timeoutMs(2000L).build());
+
+        assertThat(maxInFlight).hasValue(1);
+        assertThat(started.get()).isBetween(1, 2);
     }
 
     @Test

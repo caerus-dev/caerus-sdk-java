@@ -196,6 +196,44 @@ class DlsMockTest {
     }
 
     @Test
+    void theSameIdempotencyKeyReplaysTheSameLockLikeTheEngine() {
+        Transaction tx = client.beginTransaction();
+        AcquireLockOptions options = AcquireLockOptions.builder().idempotencyKey("idem-1").build();
+
+        LockHolder first = client.acquireLock("ns", "k", tx.transactionId(), LockMode.EXCLUSIVE, options);
+        LockHolder again = client.acquireLock("ns", "k", tx.transactionId(), LockMode.EXCLUSIVE, options);
+
+        assertThat(again).isEqualTo(first);
+        assertThat(client.getLockStatus("ns", "k").activeHolders()).hasSize(1);
+    }
+
+    @Test
+    void anotherKeyForALockTheTransactionAlreadyHasIsAlreadyHeld() {
+        Transaction tx = client.beginTransaction();
+        client.acquireLock("ns", "k", tx.transactionId(), LockMode.EXCLUSIVE,
+                AcquireLockOptions.builder().idempotencyKey("idem-1").build());
+
+        assertThatThrownBy(() -> client.acquireLock("ns", "k", tx.transactionId(), LockMode.EXCLUSIVE,
+                AcquireLockOptions.builder().idempotencyKey("idem-2").build()))
+                .isInstanceOf(LockAlreadyHeldError.class)
+                .satisfies(error -> assertThat(((LockAlreadyHeldError) error).reason())
+                        .contains("LOCK_ALREADY_HELD_EXCLUSIVELY"));
+        assertThatThrownBy(() -> client.acquireLock("ns", "k", tx.transactionId(), LockMode.EXCLUSIVE))
+                .isInstanceOf(LockAlreadyHeldError.class);
+    }
+
+    @Test
+    void theIdempotencyKeyOfAnotherTransactionDoesNotReplay() {
+        Transaction tx1 = client.beginTransaction();
+        Transaction tx2 = client.beginTransaction();
+        AcquireLockOptions options = AcquireLockOptions.builder().idempotencyKey("idem-1").build();
+        client.acquireLock("ns", "k", tx1.transactionId(), LockMode.EXCLUSIVE, options);
+
+        assertThatThrownBy(() -> client.acquireLock("ns", "k", tx2.transactionId(), LockMode.EXCLUSIVE, options))
+                .isInstanceOf(LockDeniedError.class);
+    }
+
+    @Test
     void refusesALockForATransactionThatDoesNotExist() {
         assertThatThrownBy(() -> client.acquireLock("ns", "k", "ghost", LockMode.EXCLUSIVE))
                 .isInstanceOf(DlsNotFoundError.class);

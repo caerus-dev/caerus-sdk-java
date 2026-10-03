@@ -184,8 +184,7 @@ mvn verify
 
 Genera el cliente gRPC desde `proto/`, compila y corre los tests contra un motor gRPC falso
 en `127.0.0.1`. La verificación contra un motor real está en
-[docs/verificacion-en-vivo.md](docs/verificacion-en-vivo.md) y las diferencias con el SDK
-de TypeScript en [docs/paridad.md](docs/paridad.md).
+[docs/verificacion-en-vivo.md](docs/verificacion-en-vivo.md).
 
 ## Licencia
 

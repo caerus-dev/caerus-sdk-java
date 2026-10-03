@@ -199,8 +199,13 @@ class LiveDlsTest {
                 .filter(error -> error instanceof CaerusError caerus && caerus.reason().orElse("").equals("DEADLOCK_DETECTED"))
                 .count();
 
-        Live.log("nadie fue abortado por deadlock", aborted + " abortadas");
+        Live.log("nadie fue abortado por deadlock", aborted + " abortadas, " + results);
         assertThat(aborted).isZero();
+        for (Throwable error : results) {
+            if (error != null) {
+                assertThat(error).as("solo puede cortar por tiempo").isInstanceOf(dev.caerus.sdk.dls.DlsTimeoutError.class);
+            }
+        }
     }
 
     @Test

@@ -121,7 +121,8 @@ class LiveSreTest {
             Live.log("el grupo encuentra el recurso", String.valueOf(page.resources().size()));
             assertThat(page.resources()).extracting(Resource::key).contains(key);
 
-            Resource updated = caerus.updateResource(key, 4);
+            Resource updated = caerus.updateResource(key, 4,
+                    dev.caerus.sdk.sre.UpdateResourceOptions.builder().idempotencyKey(UUID.randomUUID().toString()).build());
             Live.log("updateResource suma stock", String.valueOf(updated.availableAmount()));
             assertThat(updated.availableAmount()).isEqualTo(caerus.getResource(key).availableAmount());
         } finally {

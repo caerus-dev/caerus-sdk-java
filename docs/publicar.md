@@ -55,6 +55,8 @@ En `caerus-dev/caerus-sdk-java` → Settings → Secrets and variables → Actio
 
 ```bash
 gh secret set CENTRAL_USERNAME --repo caerus-dev/caerus-sdk-java
+gh secret set CENTRAL_PASSWORD --repo caerus-dev/caerus-sdk-java
+gh secret set GPG_PASSPHRASE --repo caerus-dev/caerus-sdk-java
 gpg --armor --export-secret-keys ID_DE_LA_CLAVE | gh secret set GPG_PRIVATE_KEY --repo caerus-dev/caerus-sdk-java
 ```
 
